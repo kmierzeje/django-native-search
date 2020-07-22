@@ -3,9 +3,11 @@ from django.db.models.functions import Lower
 import django_expression_index
 
 from django.template.loader import render_to_string
-from .manager import IndexManager
 from django.utils.functional import cached_property
+from django.db.models.signals import post_save
+from django.dispatch import receiver
 
+from .manager import IndexManager
 
 class Lexem(models.Model):
     surface=models.CharField(max_length=255, db_index=True, unique=True)
@@ -15,6 +17,23 @@ class Lexem(models.Model):
     
     def __str__(self):
         return self.surface
+
+class LexemTail(models.Model):
+    lexem=models.ForeignKey(Lexem, on_delete=models.CASCADE)
+    surface=models.CharField(max_length=255, db_index=True)
+    
+    class Meta:
+        indexes=[django_expression_index.ExpressionIndex(expressions=[Lower('surface')])]
+        unique_together=('lexem','surface')
+    
+    def __str__(self):
+        return self.surface
+
+@receiver(post_save, sender=Lexem)
+def update_lexem_tail(instance, **kwargs):
+    instance.tail_set.all().delete()
+    for i in range(len(instance.surface)):
+        instance.tail_set.create(surface=instance.surface[i:])
 
 
 models.CharField.register_lookup(Lower)
@@ -42,9 +61,10 @@ class Index(models.Model):
             lookup +="__lower"
         tokens=list(cls.tokenize(query))
         if len(tokens)==1:
-            return [models.Q(occurrence__lexem__in=Lexem.objects.filter(**{
-                lookup+"__gte":tokens[0],
-                lookup+"__lt":tokens[0]+chr(0x10FFFF)}))]
+            return [models.Q(occurrence__lexem__in=Lexem.objects.filter(
+                tail__in=LexemTail.objects.filter(**{
+                    lookup+"__gte":tokens[0],
+                    lookup+"__lt":tokens[0]+chr(0x10FFFF)})))]
             
         return [models.Q(occurrence__lexem__in=Lexem.objects.filter(**{lookup:token}))
                 for token in tokens]
