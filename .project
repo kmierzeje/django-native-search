@@ -3,6 +3,7 @@
 	<name>django-native-search</name>
 	<comment></comment>
 	<projects>
+		<project>django-expression-index</project>
 	</projects>
 	<buildSpec>
 		<buildCommand>
