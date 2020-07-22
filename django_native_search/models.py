@@ -19,7 +19,8 @@ class Lexem(models.Model):
         return self.surface
 
 class LexemTail(models.Model):
-    lexem=models.ForeignKey(Lexem, on_delete=models.CASCADE)
+    lexem=models.ForeignKey(Lexem, on_delete=models.CASCADE, 
+                            related_name="tails", related_query_name='tail')
     surface=models.CharField(max_length=255, db_index=True)
     
     class Meta:
@@ -31,9 +32,9 @@ class LexemTail(models.Model):
 
 @receiver(post_save, sender=Lexem)
 def update_lexem_tail(instance, **kwargs):
-    instance.tail_set.all().delete()
+    instance.tails.all().delete()
     for i in range(len(instance.surface)):
-        instance.tail_set.create(surface=instance.surface[i:])
+        instance.tails.create(surface=instance.surface[i:])
 
 
 models.CharField.register_lookup(Lower)
