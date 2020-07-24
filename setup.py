@@ -11,7 +11,7 @@ setuptools.setup(
     long_description=long_description,
     long_description_content_type='text/markdown',
     packages=setuptools.find_packages(),
-    install_requires=['django>=3.0.8'],
+    install_requires=['django>=3.0.8', 'django-expression-index>=0.1.0'],
     classifiers=[
         'Development Status :: 4 - Beta',
         'Environment :: Web Environment',

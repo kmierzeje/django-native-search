@@ -1,21 +1,35 @@
+import copy
 from django.core.exceptions import FieldDoesNotExist
-
-from django.db.models import F, Value, Min, OuterRef, Count, FloatField, QuerySet
+from django.db.models import F, Value, Min, OuterRef, Count, FloatField, QuerySet, Q, Prefetch
 from django.db.models.manager import BaseManager
 from django.db.models.functions import Abs
 from .fields import OccurrencesField
 
 class SearchQuerySet(QuerySet):
+    def __init__(self, model=None, query=None, using=None, hints=None):
+        super().__init__(model=model, query=query, using=using, hints=hints)
+        self.search_conditions=[]
+        
     def search(self, query):
-        results=self
+        ranking=self
         for q in self.model.parse_query(query):
-            results=results.annotate_rank(q)
-        results=self.annotate(rank=results.filter(pk=OuterRef('pk')).values('rank'))
+            ranking=ranking.annotate_rank(q)
+        results=self.annotate(rank=ranking.filter(pk=OuterRef('pk')).values('rank'))
+        results.search_conditions=ranking.search_conditions[:]
         return results.filter(rank__isnull=False).order_by('rank')
         
     def annotate_rank(self, q):
-        i=getattr(self,"_i", 0)
-        ranking=self.filter(q).annotate(**{f"p{i}":F('occurrence__position')})
+        
+        def prefix_lookups(q):
+            if isinstance(q, tuple):
+                return "occurrence__"+q[0], q[1]
+            for i,c in enumerate(q.children):
+                q.children[i]=prefix_lookups(c)
+            return q
+        
+        i=len(self.search_conditions)
+        ranking=self.filter(prefix_lookups(copy.deepcopy(q)))
+        ranking=ranking.annotate(**{f"p{i}":F('occurrence__position')})
         if i==0:
             ranking=ranking.annotate(d0=Value(1, output_field=FloatField()))
         else:
@@ -25,8 +39,19 @@ class SearchQuerySet(QuerySet):
         ranking=ranking.annotate(
             rank=Min(f"d{i}", output_field=FloatField())/Count("*", output_field=FloatField()))
         
-        ranking._i=i+1
+        ranking.search_conditions.append(q)
         return ranking
+    
+    def prefetch_matches(self):
+        qs=self.model.occurrences.filter(Q(*self.search_conditions, _connector=Q.OR))
+        return self.prefetch_related(Prefetch("occurrences", 
+                                  queryset=qs,
+                                  to_attr="matches"))
+    
+    def _clone(self):
+        c = super()._clone()
+        c.search_conditions=self.search_conditions[:]
+        return c
 
 
 class IndexManager(BaseManager.from_queryset(SearchQuerySet)):

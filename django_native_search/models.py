@@ -8,6 +8,15 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 
 from .manager import IndexManager
+from django.utils.safestring import mark_safe
+from django.conf import settings
+
+
+MIN_TAIL_LEN=getattr(settings,"SEARCH_MIN_SUBSTR_LENGTH", 2)
+MAX_TAIL_COUNT_IN_QUERY=getattr(settings, "SEARCH_MAX_SUBTSTR_COUNT_IN_QUERY", 300)
+MAX_EXCERPT_FRAGMENTS=getattr(settings, "SEARCH_MAX_EXCERPT_FRAGMENTS", 5)
+EXCERPT_FRAGMENT_START_OFFSET=getattr(settings, "SEARCH_EXCERPT_FRAGMENT_START_OFFSET", -2)
+EXCERPT_FRAGMENT_END_OFFSET=getattr(settings, "SEARCH_EXCERPT_FRAGMENT_END_OFFSET", 5)
 
 class Lexem(models.Model):
     surface=models.CharField(max_length=255, db_index=True, unique=True)
@@ -34,7 +43,9 @@ class LexemTail(models.Model):
 def update_lexem_tail(instance, **kwargs):
     instance.tails.all().delete()
     for i in range(len(instance.surface)):
-        instance.tails.create(surface=instance.surface[i:])
+        tail=instance.surface[i:]
+        if len(tail)>MIN_TAIL_LEN:
+            instance.tails.create(surface=tail)
 
 
 models.CharField.register_lookup(Lower)
@@ -61,14 +72,57 @@ class Index(models.Model):
         if query.islower():
             lookup +="__lower"
         tokens=list(cls.tokenize(query))
-        if len(tokens)==1:
-            return [models.Q(occurrence__lexem__in=Lexem.objects.filter(
-                tail__in=LexemTail.objects.filter(**{
-                    lookup+"__gte":tokens[0],
-                    lookup+"__lt":tokens[0]+chr(0x10FFFF)})))]
+        if len(tokens)==1 and len(tokens[0])>MIN_TAIL_LEN:
+            tail_q=LexemTail.objects.filter(**{
+                lookup+"__gte":tokens[0],
+                lookup+"__lt":tokens[0]+chr(0x10FFFF)})
+            if tail_q.count()<=MAX_TAIL_COUNT_IN_QUERY:
+                return [models.Q(lexem__in=Lexem.objects.filter(
+                    tail__in=tail_q))]
             
-        return [models.Q(occurrence__lexem__in=Lexem.objects.filter(**{lookup:token}))
+        return [models.Q(lexem__in=Lexem.objects.filter(**{lookup:token}))
                 for token in tokens]
+        
+    @property
+    def excerpt(self):
+        matches=getattr(self, 'matches', None)
+        if not matches:
+            return ""
+        
+        best_matches={matches[0].lexem_id:(matches[0], 0xFFFF)}
+        last_match=matches[0]
+        for m in matches[1:]:
+            rank=m.position-last_match.position
+            last=best_matches.get(last_match.lexem_id)
+            if not last or rank<last[1]:
+                best_matches[last_match.lexem_id]=last_match, rank
+            last_match=m
+        
+        best_matches=[m[0] for m in list(best_matches.values())[:MAX_EXCERPT_FRAGMENTS]]
+        
+        words=self.occurrences.filter(models.Q(*[
+            models.Q(position__gt=match.position+EXCERPT_FRAGMENT_START_OFFSET,
+                     position__lt=match.position+EXCERPT_FRAGMENT_END_OFFSET)
+            for match in best_matches], _connector=models.Q.OR))
+        
+        highlight=set([m.position for m in matches])
+        excerpt=""
+        pos=-1
+        for word in words.select_related('lexem'):
+            if word.position>pos+1:
+                excerpt+="..."
+            if pos>0:
+                excerpt+=" "
+            
+            if word.position in highlight:
+                excerpt+= self.highlight(word)
+            else:
+                excerpt+=word.lexem.surface
+            pos=word.position+1
+        return mark_safe(excerpt)
+    
+    def highlight(self, word):
+        return f"<em>{word.lexem.surface}</em>"
     
     @cached_property
     def rendered_text(self):
