@@ -51,7 +51,7 @@ class OccurrencesField(models.ManyToManyField):
         instance.occurrences.all().delete()
         
         lexem_cache={}
-        for position, surface in enumerate(instance.prepare_text()):
+        for position, surface in enumerate(instance.tokens):
             if len(surface)>max_length:
                 continue
             

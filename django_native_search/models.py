@@ -51,6 +51,8 @@ def update_lexem_tail(instance, **kwargs):
 models.CharField.register_lookup(Lower)
 
 class Index(models.Model):
+    length=models.PositiveIntegerField(editable=False)
+    
     object_field="object"
     objects=IndexManager()
 
@@ -58,6 +60,19 @@ class Index(models.Model):
     
     class Meta:
         abstract=True
+        
+    
+    def save(self, force_insert=False, force_update=False, using=None, 
+        update_fields=None):
+        self.length=len(self.tokens)
+        return super().save(force_insert=force_insert, 
+                            force_update=force_update, 
+                            using=using, 
+                            update_fields=update_fields)
+    
+    @cached_property
+    def tokens(self):
+        return list(self.prepare_text())
     
     def prepare_text(self):
         return self.tokenize(self.rendered_text)
@@ -119,6 +134,8 @@ class Index(models.Model):
             else:
                 excerpt+=word.lexem.surface
             pos=word.position+1
+        if pos<self.length:
+            excerpt+="..."
         return mark_safe(excerpt)
     
     def highlight(self, word):

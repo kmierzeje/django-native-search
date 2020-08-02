@@ -1,6 +1,7 @@
 import copy
 from django.core.exceptions import FieldDoesNotExist
-from django.db.models import F, Value, Min, OuterRef, Count, FloatField, QuerySet, Q, Prefetch
+from django.db.models import (F, Value, Min, OuterRef, Count, FloatField, QuerySet, Q, Prefetch,
+                              ExpressionWrapper)
 from django.db.models.manager import BaseManager
 from django.db.models.functions import Abs
 from .fields import OccurrencesField
@@ -37,7 +38,7 @@ class SearchQuerySet(QuerySet):
                 **{f"d{i}":Abs(F(f"p{i}")-F(f'p{i-1}'), output_field=FloatField())+F(f"d{i-1}")})
         
         ranking=ranking.annotate(
-            rank=Min(f"d{i}", output_field=FloatField())/Count("*", output_field=FloatField()))
+            rank=ExpressionWrapper(Min(f"d{i}")*F("length")/Count("*"), output_field=FloatField()))
         
         ranking.search_conditions.append(q)
         return ranking
