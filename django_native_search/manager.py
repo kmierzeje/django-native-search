@@ -35,7 +35,7 @@ class SearchQuerySet(QuerySet):
             ranking=ranking.annotate(d0=Value(1, output_field=FloatField()))
         else:
             ranking=ranking.annotate(
-                **{f"d{i}":Abs(F(f"p{i}")-F(f'p{i-1}'), output_field=FloatField())+F(f"d{i-1}")})
+                **{f"d{i}":Abs(F(f"p{i}")-F(f'p{i-1}')-1.0, output_field=FloatField())+F(f"d{i-1}")})
         
         ranking=ranking.annotate(
             rank=ExpressionWrapper(Min(f"d{i}")*F("length")/Count("*"), output_field=FloatField()))
