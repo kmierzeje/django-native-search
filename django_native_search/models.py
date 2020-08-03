@@ -1,3 +1,4 @@
+import logging
 from django.db import models
 from django.db.models.functions import Lower
 import django_expression_index
@@ -64,8 +65,9 @@ class Index(models.Model):
     
     def save(self, force_insert=False, force_update=False, using=None, 
         update_fields=None):
+        logging.info(f"Indexing {self}...")
         self.length=len(self.tokens)
-        return super().save(force_insert=force_insert, 
+        super().save(force_insert=force_insert, 
                             force_update=force_update, 
                             using=using, 
                             update_fields=update_fields)
