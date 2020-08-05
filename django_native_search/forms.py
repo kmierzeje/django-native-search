@@ -5,7 +5,8 @@ from django.views.generic.edit import FormMixin
 from django.core.paginator import Paginator
 from django.utils.text import capfirst
 
-ALL_KEY = "All"
+ALL_VALUE = "all"
+EMPTY_VALUE = "empty"
 
 class SearchForm(forms.Form):
     q = forms.CharField(
@@ -15,26 +16,33 @@ class SearchForm(forms.Form):
     )
     
     def search(self):
-        filters = dict([(key, val) for key, val in self.cleaned_data.items()
-                        if key != 'q' and val != ALL_KEY])
+        filters = dict([(key, "" if val==EMPTY_VALUE else val) 
+                        for key, val in self.cleaned_data.items()
+                        if key != 'q' and val != ALL_VALUE])
         
         return self.index.objects.filter(**filters).search(self.cleaned_data["q"])
 
-def field_choices(index, name):
-    yield ALL_KEY, ALL_KEY
+def field_choices(index, name, empty_label, all_label):
+    yield ALL_VALUE, all_label
     for item in index.objects.all().values_list(name, flat=True).distinct():
-        yield item, item if item else "Global"
+        yield (item, item) if item else (EMPTY_VALUE, empty_label)
 
-def serchform_choice_field(field, widget_attrs={},**kwargs):
+def searchform_choice_field(field, formfield_class, 
+                           empty_label="---------", all_label="All", 
+                           widget_attrs={}, **kwargs):
     attrs = dict(label=capfirst(field.verbose_name),
-                 widget = forms.Select(**widget_attrs), 
-                 choices = partial(field_choices, field.model, field.name), 
-                 required = False)
+                 widget = formfield_class.widget(**widget_attrs), 
+                 choices = partial(field_choices, field.model, field.name, empty_label, all_label), 
+                 required = False,
+                 empty_value=ALL_VALUE)
     attrs.update(**kwargs)
-    return forms.ChoiceField(**attrs)
-    
+    return formfield_class(**attrs)
+
+def searchform_single_choice_field(field, **kwargs):
+    return searchform_choice_field(field, forms.TypedChoiceField, **kwargs)
+
 def searchform_factory(index, base=SearchForm, 
-                       formfield_callback=serchform_choice_field,
+                       formfield_callback=searchform_single_choice_field,
                        formfield_attrs={}):
     class_name = index.__name__ + 'SearchForm'
     attrs={
@@ -43,7 +51,9 @@ def searchform_factory(index, base=SearchForm,
     for field in index._meta.fields:
         if field.db_index:
             if formfield_callback:
-                attrs[field.name]=formfield_callback(field, **formfield_attrs)
+                formfield = formfield_callback(field, **formfield_attrs)
+                if formfield:
+                    attrs[field.name]= formfield
             else: 
                 attrs[field.name]=field.formfield(**formfield_attrs)
     return type(class_name, (base,), attrs)
