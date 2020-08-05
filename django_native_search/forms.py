@@ -6,7 +6,6 @@ from django.core.paginator import Paginator
 from django.utils.text import capfirst
 
 ALL_VALUE = "all"
-EMPTY_VALUE = "empty"
 
 class SearchForm(forms.Form):
     q = forms.CharField(
@@ -16,33 +15,53 @@ class SearchForm(forms.Form):
     )
     
     def search(self):
-        filters = dict([(key, "" if val==EMPTY_VALUE else val) 
+        filters = dict([(key+"__in", val) 
                         for key, val in self.cleaned_data.items()
-                        if key != 'q' and val != ALL_VALUE])
+                        if key != 'q' and val != None and key in self.data])
         
         return self.index.objects.filter(**filters).search(self.cleaned_data["q"])
 
-def field_choices(index, name, empty_label, all_label):
-    yield ALL_VALUE, all_label
-    for item in index.objects.all().values_list(name, flat=True).distinct():
-        yield (item, item) if item else (EMPTY_VALUE, empty_label)
+def field_values(field):
+    return list(field.model.objects.all().values_list(field.name, flat=True).distinct())
+
+def field_choices(field, empty_label, all_label):
+    if all_label:
+        yield ALL_VALUE, all_label
+    for item in field_values(field):
+        yield item, item if item else empty_label
+
+class InitialAsDefaultMixin:
+    def bound_data(self, data, initial):
+        return super().bound_data(data if data is not None else initial, initial)
+    
+def formfield_with_default(formfield_class):
+    return type(formfield_class.__name__+"Default", (InitialAsDefaultMixin, formfield_class), {})
 
 def searchform_choice_field(field, formfield_class, 
                            empty_label="---------", all_label="All", 
                            widget_attrs={}, **kwargs):
     attrs = dict(label=capfirst(field.verbose_name),
                  widget = formfield_class.widget(**widget_attrs), 
-                 choices = partial(field_choices, field.model, field.name, empty_label, all_label), 
-                 required = False,
-                 empty_value=ALL_VALUE)
+                 choices = partial(field_choices, field, empty_label, all_label), 
+                 required = False)
+    
+    attrs.setdefault("initial", ALL_VALUE if all_label else partial(field_values, field))
     attrs.update(**kwargs)
-    return formfield_class(**attrs)
+    return formfield_with_default(formfield_class)(**attrs)
 
 def searchform_single_choice_field(field, **kwargs):
+    kwargs["coerce"] = lambda x : [x] if x != ALL_VALUE else None
+    kwargs["empty_value"] = [""]
     return searchform_choice_field(field, forms.TypedChoiceField, **kwargs)
 
+def searchform_multiple_choice_field(field, **kwargs):
+    kwargs.setdefault("all_label", None)
+    kwargs["empty_value"] = None
+    return searchform_choice_field(field, forms.TypedMultipleChoiceField, **kwargs)
+
+
 def searchform_factory(index, base=SearchForm, 
-                       formfield_callback=searchform_single_choice_field,
+                       formfield_callback=searchform_multiple_choice_field,
                        formfield_attrs={}):
     class_name = index.__name__ + 'SearchForm'
     attrs={
