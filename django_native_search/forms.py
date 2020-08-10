@@ -14,10 +14,16 @@ class SearchForm(forms.Form):
         widget=forms.TextInput(attrs={"type": "search", 'style': "width:400px"}),
     )
     
+    def clean(self):
+        for key in list(self.cleaned_data):
+            if key not in self.data:
+                del self.cleaned_data[key]
+        return super().clean()
+    
     def search(self):
-        filters = dict([(key+"__in", val) 
+        filters = dict([(key if isinstance(val, str) else f"{key}__in", val) 
                         for key, val in self.cleaned_data.items()
-                        if key != 'q' and val != None and key in self.data])
+                        if key != 'q' and val != ALL_VALUE])
         
         return self.index.objects.filter(**filters).search(self.cleaned_data["q"])
 
@@ -30,13 +36,6 @@ def field_choices(field, empty_label, all_label):
     for item in field_values(field):
         yield item, item if item else empty_label
 
-class InitialAsDefaultMixin:
-    def bound_data(self, data, initial):
-        return super().bound_data(data if data is not None else initial, initial)
-    
-def formfield_with_default(formfield_class):
-    return type(formfield_class.__name__+"Default", (InitialAsDefaultMixin, formfield_class), {})
-
 def searchform_choice_field(field, formfield_class, 
                            empty_label="---------", all_label="All", 
                            widget_attrs={}, **kwargs):
@@ -45,13 +44,12 @@ def searchform_choice_field(field, formfield_class,
                  choices = partial(field_choices, field, empty_label, all_label), 
                  required = False)
     
-    attrs.setdefault("initial", ALL_VALUE if all_label else partial(field_values, field))
+    if all_label:
+        attrs.setdefault("initial", ALL_VALUE)
     attrs.update(**kwargs)
-    return formfield_with_default(formfield_class)(**attrs)
+    return formfield_class(**attrs)
 
 def searchform_single_choice_field(field, **kwargs):
-    kwargs["coerce"] = lambda x : [x] if x != ALL_VALUE else None
-    kwargs["empty_value"] = [""]
     return searchform_choice_field(field, forms.TypedChoiceField, **kwargs)
 
 def searchform_multiple_choice_field(field, **kwargs):
