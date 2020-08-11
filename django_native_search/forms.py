@@ -93,10 +93,12 @@ class GetFormMixin(FormMixin):
         return kwargs
 
 class SearchFormMixin(GetFormMixin):
+    results_per_page=25
+    
     def form_valid(self, form):
         results=form.search().prefetch_matches()
         
-        paginator = Paginator(results, 25)
+        paginator = Paginator(results, self.results_per_page)
         paginator.current_page = paginator.get_page(self.request.GET.get('page'))
         
         return self.render_to_response({
