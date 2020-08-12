@@ -6,7 +6,7 @@ with open("README.md", "r") as fh:
 setuptools.setup(
     author='Kamil Mierzejewski',
     name='django-native-search',
-    version='0.1.0',
+    version='0.2.0',
     description='A simple search engine using native django database backend.',
     long_description=long_description,
     long_description_content_type='text/markdown',

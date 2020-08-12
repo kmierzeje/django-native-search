@@ -2,7 +2,6 @@ from functools import partial
 
 from django import forms
 from django.views.generic.edit import FormMixin
-from django.core.paginator import Paginator
 from django.utils.text import capfirst
 
 ALL_VALUE = "all"
@@ -98,10 +97,7 @@ class SearchFormMixin(GetFormMixin):
     def form_valid(self, form):
         results=form.search().prefetch_matches()
         
-        paginator = Paginator(results, self.results_per_page)
-        paginator.current_page = paginator.get_page(self.request.GET.get('page'))
-        
         return self.render_to_response({
             **self.get_context_data(),
-            'paginator':paginator
+            'results': results
             })
