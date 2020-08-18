@@ -5,6 +5,9 @@ from django.db.models import (F, Value, Min, OuterRef, Count, FloatField, QueryS
 from django.db.models.manager import BaseManager
 from django.db.models.functions import Abs
 from .fields import OccurrencesField
+import logging
+
+logger=logging.getLogger(__name__)
 
 class SearchQuerySet(QuerySet):
     def __init__(self, model=None, query=None, using=None, hints=None):
@@ -103,9 +106,14 @@ class IndexManager(BaseManager.from_queryset(SearchQuerySet)):
                 return index
         return None
     
-    def refresh(self, objects):
+    def refresh(self, objects, break_on_failure=False):
         for obj in objects:
-            self.get_or_prepare(obj).save()
+            try:
+                self.get_or_prepare(obj).save()
+            except Exception:
+                logger.exception(f"Exception raised when updating index for '{obj}'")
+                if break_on_failure:
+                    raise
     
     def rebuild(self):
         if self.target_model:
