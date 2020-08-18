@@ -4,8 +4,13 @@ from django.db.models import (F, Value, Min, OuterRef, Count, FloatField, QueryS
                               ExpressionWrapper)
 from django.db.models.manager import BaseManager
 from django.db.models.functions import Abs
+from django.conf import settings
 from .fields import OccurrencesField
 import logging
+
+
+
+MAX_RANKING_KEYWORDS_COUNT=getattr(settings,"SEARCH_MAX_RANKING_KEYWORDS_COUNT", 3)
 
 logger=logging.getLogger(__name__)
 
@@ -46,8 +51,11 @@ class SearchQuerySet(QuerySet):
         return self.filter(prefix_lookups(copy.deepcopy(q)))
     
     def annotate_rank(self, q):
-        ranking=self.filter_by_lexem(q)
         i=len(self.search_conditions)
+        if i>=MAX_RANKING_KEYWORDS_COUNT:
+            self.search_conditions.append(q)
+            return self
+        ranking=self.filter_by_lexem(q)
         ranking=ranking.annotate(**{f"p{i}":F('occurrence__position')})
         if i==0:
             ranking=ranking.annotate(d0=Value(1, output_field=FloatField()))
