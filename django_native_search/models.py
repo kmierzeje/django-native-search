@@ -8,9 +8,10 @@ from django.utils.functional import cached_property
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
-from .manager import IndexManager
+from .manager import IndexEntryManager, IndexManager
 from django.utils.safestring import mark_safe
 from django.conf import settings
+from django.contrib.contenttypes.models import ContentType
 
 
 MIN_TAIL_LEN=getattr(settings,"SEARCH_MIN_SUBSTR_LENGTH", 2)
@@ -51,11 +52,11 @@ def update_lexem_tail(instance, **kwargs):
 
 models.CharField.register_lookup(Lower)
 
-class Index(models.Model):
+class IndexEntry(models.Model):
     length=models.PositiveIntegerField(editable=False)
     
     object_field="object"
-    objects=IndexManager()
+    objects=IndexEntryManager()
 
     search_template=None
     
@@ -155,3 +156,16 @@ class Index(models.Model):
     @classmethod
     def get_index_queryset(cls):
         return cls.objects.target_model._meta.default_manager.all()
+    
+
+class Index(ContentType):
+    objects = IndexManager()
+    class Meta:
+        proxy=True
+        verbose_name_plural="indexes"
+        
+    def occurrences(self):
+        return self.model_class().objects.aggregate(models.Count('occurrence'))['occurrence__count']
+    
+    def entries(self):
+        return self.model_class().objects.count()

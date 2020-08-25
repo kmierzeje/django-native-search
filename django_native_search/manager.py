@@ -2,7 +2,7 @@ import copy
 from django.core.exceptions import FieldDoesNotExist
 from django.db.models import (F, Value, Min, OuterRef, Count, FloatField, QuerySet, Q, Prefetch,
                               ExpressionWrapper)
-from django.db.models.manager import BaseManager
+from django.db.models.manager import BaseManager, Manager
 from django.db.models.functions import Abs
 from django.conf import settings
 from .fields import OccurrencesField
@@ -80,11 +80,36 @@ class SearchQuerySet(QuerySet):
         c.search_conditions=self.search_conditions[:]
         return c
 
+class IndexManager(Manager):
+    root_indexentry_models=[]
+    
+    def get_queryset(self):
+        qs=super().get_queryset()
+        return qs.filter(Q(*[Q(app_label=model._meta.app_label, model = model._meta.model_name)
+                            for model in self.indexentry_models], _connector=Q.OR))
 
-class IndexManager(BaseManager.from_queryset(SearchQuerySet)):
+    @property
+    def indexentry_models(self):
+        for model in self.root_indexentry_models:
+            for m in self.iter_descendants(model):
+                yield m
+    
+    def iter_descendants(self, cls):
+        yield cls
+        for child in cls.__subclasses__():
+            for m in self.iter_descendants(child):
+                yield m
+    
+    @classmethod
+    def register(cls, model):
+        cls.root_indexentry_models.append(model)
+
+
+class IndexEntryManager(BaseManager.from_queryset(SearchQuerySet)):
     def contribute_to_class(self, cls, name, **kwargs):
         super().contribute_to_class(cls, name, **kwargs)
         OccurrencesField(query_name="occurrence").contribute_to_class(cls, "occurrences", **kwargs)
+        IndexManager.register(cls)
 
     @property
     def target_model(self):
@@ -131,4 +156,3 @@ class IndexManager(BaseManager.from_queryset(SearchQuerySet)):
             subcls._meta.default_manager.rebuild()
             
     
-
