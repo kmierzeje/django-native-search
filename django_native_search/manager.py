@@ -36,6 +36,9 @@ class SearchQuerySet(QuerySet):
                 q_filtered=q_filtered.filter(pk__in=filtered)
             filtered=q_filtered
         
+        if filtered is None:
+            return self.none()
+        
         results=self.annotate(rank=ranking.filter(pk=OuterRef('pk')).values('rank'))
         results.search_conditions=ranking.search_conditions[:]
         results=results.filter(pk__in=filtered)

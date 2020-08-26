@@ -3,13 +3,14 @@ from functools import partial
 from django import forms
 from django.views.generic.edit import FormMixin
 from django.utils.text import capfirst
+from django.core.exceptions import ValidationError
 
 ALL_VALUE = "all"
 
 class SearchForm(forms.Form):
     q = forms.CharField(
         required=True,
-        label="Keywords",
+        label="Query",
         widget=forms.TextInput(attrs={"type": "search", 'style': "width:400px"}),
     )
     
@@ -18,6 +19,15 @@ class SearchForm(forms.Form):
             if key not in self.data:
                 del self.cleaned_data[key]
         return super().clean()
+    
+    def clean_q(self):
+        query = self.cleaned_data['q']
+        tokens=self.index.tokenize(query)
+        try:
+            next(tokens)
+        except StopIteration:
+            raise ValidationError(f"'{query}' does not contain relevant keywords.")
+        return query
     
     def search(self):
         filters = dict([(key if isinstance(val, str) else f"{key}__in", val) 
