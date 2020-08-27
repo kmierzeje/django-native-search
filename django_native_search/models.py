@@ -20,6 +20,8 @@ MAX_EXCERPT_FRAGMENTS=getattr(settings, "SEARCH_MAX_EXCERPT_FRAGMENTS", 5)
 EXCERPT_FRAGMENT_START_OFFSET=getattr(settings, "SEARCH_EXCERPT_FRAGMENT_START_OFFSET", -2)
 EXCERPT_FRAGMENT_END_OFFSET=getattr(settings, "SEARCH_EXCERPT_FRAGMENT_END_OFFSET", 5)
 
+logger=logging.getLogger(__name__)
+
 class Lexem(models.Model):
     surface=models.CharField(max_length=255, db_index=True, unique=True)
     
@@ -66,7 +68,7 @@ class IndexEntry(models.Model):
     
     def save(self, force_insert=False, force_update=False, using=None, 
         update_fields=None):
-        logging.info(f"Indexing {self}...")
+        logger.info(f"Indexing {self}...")
         self.length=len(self.tokens)
         super().save(force_insert=force_insert, 
                             force_update=force_update, 
