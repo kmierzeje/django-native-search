@@ -172,24 +172,31 @@ The `excerpt` member of index entry instance returns a fragment of the indexed d
 There are serveral settings to tweak the search engine.
 #### `SEARCH_MIN_SUBSTR_LENGTH`
 Default : `2`
+
 Minimum number of characters in keyword to run substring search.
 #### `SEARCH_MAX_SUBTSTR_COUNT_IN_QUERY`
 Default : `300`
+
 Maximum number of indexed words containing the substring to run substring search.
 #### `SEARCH_MAX_EXCERPT_FRAGMENTS`
 Default : `5`
+
 Maximum number of fragments containing keywords to be returned in excerpt.
 #### `SEARCH_EXCERPT_FRAGMENT_START_OFFSET`
 Default : `-2`
+
 Offset of excerpt fragment start.
 #### `SEARCH_EXCERPT_FRAGMENT_END_OFFSET`
 Default : `5`
+
 Offset of excerpt fragment end.
 #### `SEARCH_MAX_RANKING_KEYWORDS_COUNT`
 Default : `3`
+
 Maximum number of keywords to be used for ranking the results. If the query contains more keywords, only the first ones will be used to calculate the ranking of results. 
 ### Search API
 To be described...
+
 Look into the code to check what you can do with it.
 ### Performance
 Despite the naive design, the index performs surpsisingly well, even with quite large datasets. It can search through 100k documents containing 10M words in a fraction of a second.
