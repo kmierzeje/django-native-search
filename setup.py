@@ -10,6 +10,7 @@ setuptools.setup(
     description='A simple search engine using native django database backend.',
     long_description=long_description,
     long_description_content_type='text/markdown',
+    url='https://github.com/kmierzeje/django-native-search',
     packages=setuptools.find_packages(),
     install_requires=['django>=3.0.8', 'django-expression-index>=0.1.0'],
     classifiers=[
