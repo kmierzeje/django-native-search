@@ -104,10 +104,11 @@ class GetFormMixin(FormMixin):
 class SearchFormMixin(GetFormMixin):
     results_per_page=25
     
+    def get_context_data(self, form, **kwargs):
+        context = super().get_context_data(**kwargs)
+        if form.is_valid():
+            context['results'] = form.search().prefetch_matches()
+        return context
+    
     def form_valid(self, form):
-        results=form.search().prefetch_matches()
-        
-        return self.render_to_response({
-            **self.get_context_data(),
-            'results': results
-            })
+        return self.render_to_response(self.get_context_data(form=form))
