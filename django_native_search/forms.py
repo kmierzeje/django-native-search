@@ -89,7 +89,7 @@ class GetFormMixin(FormMixin):
         form=self.get_form()
         
         if not form.is_bound:
-            return super().get(request, *args, **kwargs)
+            return super().get(request, *args, form=form, **kwargs)
         if form.is_valid():
             return self.form_valid(form)
         else:
