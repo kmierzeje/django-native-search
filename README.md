@@ -120,6 +120,13 @@ By default search returns matches only for whole words. If there is a single key
 For example searching for "yth" may return documents containing "python", "pythonic", "myth", "demythologization".
 
 Substring search works fine in `sqlite`. In `PostgreSQL` there is a problem with using the db index, so the searching might be too slow.
+
+Putting multiple words inside quotes forces searching for colocation of these words.
+```python
+qs = BookIndexEntry.objects.search('"Monty Python\'s Flying Circus"')
+```
+This will return a `QuerySet` of `BookIndexEntry` which contain word "Monty" followed by "Python's", followed by "Flying", followed by "Circus".
+
 ### Search form
 There is `SearchFormMixin` available to easily to create your search view:
 ```python

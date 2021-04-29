@@ -1,4 +1,4 @@
-from functools import partial
+from functools import partial, cache
 
 from django import forms
 from django.views.generic.edit import FormMixin
@@ -37,13 +37,16 @@ class SearchForm(forms.Form):
         return self.index.objects.filter(**filters).search(self.cleaned_data["q"])
 
 def field_values(field):
-    return list(field.model.objects.all().values_list(field.name, flat=True).distinct())
+    return field.model.objects.all().values_list(field.name, flat=True).distinct()
 
-def field_choices(field, empty_label, all_label):
+def field_choice_gen(field, empty_label, all_label):
     if all_label:
         yield ALL_VALUE, all_label
     for item in field_values(field):
         yield item, item if item else empty_label
+
+def field_choices(field, empty_label, all_label):
+    return list(field_choice_gen(field, empty_label, all_label))
 
 def searchform_choice_field(field, formfield_class, 
                            empty_label="---------", all_label="All", 
@@ -87,14 +90,21 @@ def searchform_factory(index, base=SearchForm,
 class GetFormMixin(FormMixin):
     def get(self, request, *args, **kwargs):
         form=self.get_form()
-        
         if not form.is_bound:
             return super().get(request, *args, form=form, **kwargs)
         if form.is_valid():
             return self.form_valid(form)
         else:
             return self.form_invalid(form)
-        
+    
+    @cache
+    def get_form(self):
+        form = super().get_form()
+        for f in form.fields.values():
+            if hasattr(f,'choices'):
+                f.choices=f.choices
+        return form
+    
     def get_form_kwargs(self):
         kwargs = super().get_form_kwargs()
         if self.request.GET:

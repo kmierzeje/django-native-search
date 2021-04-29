@@ -7,6 +7,7 @@ from django.db.models.functions import Abs
 from django.conf import settings
 from .fields import OccurrencesField
 import logging
+from functools import cache
 
 
 
@@ -14,51 +15,62 @@ MAX_RANKING_KEYWORDS_COUNT=getattr(settings,"SEARCH_MAX_RANKING_KEYWORDS_COUNT",
 
 logger=logging.getLogger(__name__)
 
+
+def prefix_lookups(q, prefix):
+    if isinstance(q, tuple):
+        return prefix+q[0], q[1]
+    for i,c in enumerate(q.children):
+        q.children[i]=prefix_lookups(c, prefix)
+    return q
+
+def apply_lexem_filter(qs, q, sticky, prefix):
+    if sticky:
+        qs=qs.annotate(p=F(prefix+'position'))
+        q=q&Q(position=F('p')+1)
+    
+    return qs.filter(prefix_lookups(copy.deepcopy(q), prefix))
+
+
 class SearchQuerySet(QuerySet):
     def __init__(self, model=None, query=None, using=None, hints=None):
         super().__init__(model=model, query=query, using=using, hints=hints)
         self.search_conditions=[]
     
+    @cache
     def count(self):
         cloned=self._clone()
         if cloned.query.annotation_select.pop("rank", None):
             return cloned.count()
         else:
             return super().count()
+        
+    def apply_filter(self, q, sticky=False):
+        return apply_lexem_filter(self, q, sticky, "occurrence__")
     
     def search(self, query):
         ranking=self
-        filtered=None
-        for q in self.model.parse_query(query):
-            ranking=ranking.annotate_rank(q)
-            q_filtered=self.filter_by_lexem(q)
-            if filtered is not None:
-                q_filtered=q_filtered.filter(pk__in=filtered)
-            filtered=q_filtered
+        filtered=self
+        conditions=self.model.parse_query(query)
+        for q in conditions:
+            sticky=getattr(q,'sticky', None)
+            if not sticky:
+                ranking=ranking.annotate_rank(q)
+            filtered=filtered.apply_filter(q, sticky)
         
-        if filtered is None:
-            return self.none()
+        if filtered is self:
+            return self
         
         results=self.annotate(rank=ranking.filter(pk=OuterRef('pk')).values('rank'))
-        results.search_conditions=ranking.search_conditions[:]
+        results.search_conditions=conditions
         results=results.filter(pk__in=filtered)
         return results.order_by('rank')
-    
-    def filter_by_lexem(self, q):
-        def prefix_lookups(q):
-            if isinstance(q, tuple):
-                return "occurrence__"+q[0], q[1]
-            for i,c in enumerate(q.children):
-                q.children[i]=prefix_lookups(c)
-            return q
-        return self.filter(prefix_lookups(copy.deepcopy(q)))
     
     def annotate_rank(self, q):
         i=len(self.search_conditions)
         if i>=MAX_RANKING_KEYWORDS_COUNT:
             self.search_conditions.append(q)
             return self
-        ranking=self.filter_by_lexem(q)
+        ranking=self.apply_filter(q)
         ranking=ranking.annotate(**{f"p{i}":F('occurrence__position')})
         if i==0:
             ranking=ranking.annotate(d0=Value(1, output_field=FloatField()))

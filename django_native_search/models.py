@@ -99,9 +99,14 @@ class IndexEntry(models.Model):
             if tail_q.count()<=MAX_TAIL_COUNT_IN_QUERY:
                 return [models.Q(lexem__in=Lexem.objects.filter(
                     tail__in=tail_q))]
-            
-        return [models.Q(lexem__in=Lexem.objects.filter(**{lookup:token}))
-                for token in tokens]
+        
+        query=[]
+        for token in tokens:
+            condition=models.Q(lexem__in=Lexem.objects.filter(**{lookup:token}))
+            if query:
+                condition.sticky=getattr(token,'sticky',False)
+            query.append(condition)
+        return query
         
     @property
     def excerpt(self):
