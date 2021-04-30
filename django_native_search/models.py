@@ -1,4 +1,5 @@
 import logging
+import re
 from django.db import models
 from django.db.models.functions import Lower
 import django_expression_index
@@ -54,6 +55,9 @@ def update_lexem_tail(instance, **kwargs):
 
 models.CharField.register_lookup(Lower)
 
+class Token(str):
+    pass
+
 class IndexEntry(models.Model):
     length=models.PositiveIntegerField(editable=False)
     
@@ -82,9 +86,30 @@ class IndexEntry(models.Model):
     def prepare_text(self):
         return self.tokenize(self.rendered_text)
     
+    token_pattern = re.compile(r'[^\s"]+')
+    quote = '"'
+    
     @classmethod
     def tokenize(cls, text):
-        return text.split()
+        i=0
+        sticky=False
+        while True:
+            res=cls.token_pattern.search(text, i)
+            if not res:
+                break
+            
+            token = Token(res.group(0))
+            if cls.quote:
+                quotes=text.count(cls.quote, i, res.start())
+                if sticky and quotes>0:
+                    sticky = False
+                    quotes-=1
+                
+                token.sticky=sticky
+                if quotes%2>0:
+                    sticky=not sticky
+            i=res.end()
+            yield token
     
     @classmethod
     def parse_query(cls, query):

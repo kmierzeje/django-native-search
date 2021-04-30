@@ -36,7 +36,7 @@ class BookIndexEntry(IndexEntry):
     object = models.OneToOneField('books.Book', on_delete=models.CASCADE)
     search_template='search_index/book.txt'
 ```
-The `object` field defines a relation to a model which is being indexed. The engine uses `search_template` to render the text with `object` variable in template context. By default the rendered text is tokenized with `str.split`. You can change this behavior by overriding `tokenize` class method in your index model.
+The `object` field defines a relation to a model which is being indexed. The engine uses `search_template` to render the text with `object` variable in template context. By default the rendered text is tokenized with by `re.searchall(r'[^\s"]+', text)`. You can change this behavior by overriding `tokenize` class method in your index model. All extracted tokens are stored in the index of respective indexed model instance.
 ```python
 import re
 
@@ -56,7 +56,8 @@ I would advise to put some additional fields to your root index model, to be abl
 It should also be possible to use `GenericForeignKey` to define the `object` field, but I haven't tried it.
 
 #### Multiple indexes
-Each direct descendant of `IndexEntry` is a separate index, so you can have multiple independent indexes in your site.
+Each direct descendant of `IndexEntry` is a separate index, so you can have multiple independent 
+indexes in your site.
 ### 3. Prepare the database
 Run the well known commands:
 ```
@@ -81,14 +82,18 @@ There is a convenient shortcut for indexing querysets:
 from book_index.models import BookIndexEntry
 BookIndexEntry.objects.rebuild()
 ```
-You can override `get_index_queryset` method in your class to do `select_related` or `filter` or anything you need, before passing the queryset for indexing. 
+You can override `get_index_queryset` method in your class to do `select_related` or `filter` 
+or anything you need, before passing the queryset for indexing. 
 
-You can call the `rebuild` method on your index model root class manager, to rebuild all descendant index models.
+You can call the `rebuild` method on your index model root class manager, to rebuild all descendant 
+index models.
 
-Probably you would like to create you own management command to run the indexing, but actually you would not use it...
+Probably you would like to create you own management command to run the indexing, but actually 
+you would not use it...
 
 #### Runtime index updates
-The indexing should be fast enough to be executed in runtime on every save of the indexed model. Just connect a handler to `post_save` signal:
+The indexing should be fast enough to be executed in runtime on every save of the indexed model. 
+Just connect a handler to `post_save` signal:
 ```python
 from django.db.models.signals import post_save
 
@@ -103,11 +108,14 @@ post_save.connect(BookIndexEntry.update_index, sender=Book)
 Now your index will be always up-to-date.
 
 ### Searching
-You can search the index simply by calling the manager's `search` method:
+You can search the index by calling the manager's `search` method. The query is tokenized using 
+the same `tokenize` method as when indexing. All tokens must be found in a document to consider it 
+matched:
 ```python
 qs = BookIndexEntry.objects.search('Monty Python')
 ```
-This will return a `QuerySet` of `BookIndexEntry` which contain both "Monty" and "Python" case sensitively. If you want your search to be case-insensitive, then provide the query in lowercase:
+This will return a `QuerySet` of `BookIndexEntry` which contain both "Monty" and "Python" case 
+sensitively. If you want your search to be case-insensitive, then provide the query in lowercase:
 ```python
 qs = BookIndexEntry.objects.search('circus')
 ```
@@ -115,17 +123,22 @@ You can filter the search results, just as any other `QuerySet`:
 ```python
 qs = BookIndexEntry.objects.search('circus').filter(object__release_date__year__gt=1970)
 ```
-By default search returns matches only for whole words. If there is a single keyword in a query, the engine does a substring search, so search results may contain documents with words matching the keyword or containing it.
+By default search returns matches only for whole words. If there is a single keyword in a query, 
+the engine does a substring search, so search results may contain documents with words matching 
+the keyword or containing it.
 
-For example searching for "yth" may return documents containing "python", "pythonic", "myth", "demythologization".
+For example searching for "yth" may return documents containing "python", "pythonic", "myth", 
+"demythologization".
 
-Substring search works fine in `sqlite`. In `PostgreSQL` there is a problem with using the db index, so the searching might be too slow.
+Substring search works fine in `sqlite`. In `PostgreSQL` there is a problem with using the db index,
+so the searching might be too slow.
 
 Putting multiple words inside quotes forces searching for colocation of these words.
 ```python
 qs = BookIndexEntry.objects.search('"Monty Python\'s Flying Circus"')
 ```
-This will return a `QuerySet` of `BookIndexEntry` which contain word "Monty" followed by "Python's", followed by "Flying", followed by "Circus".
+This will return a `QuerySet` of `BookIndexEntry` which contain word "Monty" followed by "Python's", 
+followed by "Flying", followed by "Circus".
 
 ### Search form
 There is `SearchFormMixin` available to easily to create your search view:
@@ -138,10 +151,13 @@ class SearchView(SearchFormMixin, TemplateView):
     template_name = "books_index/search.html"
     form_class = searchform_factory(BookIndexEntry)
 ```
-The `searchform_factory` function will use all fields with `db_index = True` in `BookIndexEntry` to create `MultipleChoiceField` in your form. The fields can be used to filter the results. Each filtering field in your form will contain all possible values of the field in the database.
+The `searchform_factory` function will use all fields with `db_index = True` in `BookIndexEntry` 
+to create `MultipleChoiceField` in your form. The fields can be used to filter the results. 
+Each filtering field in your form will contain all possible values of the field in the database.
 
 ### Search template
-The templated referred by `template_name` is rendered with `form` containing the form instance and `results` containing the queryset of search results if form is valid. 
+The templated referred by `template_name` is rendered with `form` containing the form instance and 
+`results` containing the queryset of search results if form is valid. 
 ```django
 {% block content %}
     <h2>Search</h2>
@@ -176,7 +192,8 @@ The templated referred by `template_name` is rendered with `form` containing the
     {% endif %}
 {% endblock %}
 ```
-The `excerpt` member of index entry instance returns a fragment of the indexed document with occurrences of search keywords hihghted with `<em>`.
+The `excerpt` member of index entry instance returns a fragment of the indexed document with 
+occurrences of search keywords hihghted with `<em>`.
 ### Settings
 There are serveral settings to tweak the search engine.
 #### `SEARCH_MIN_SUBSTR_LENGTH`
@@ -202,10 +219,12 @@ Offset of excerpt fragment end.
 #### `SEARCH_MAX_RANKING_KEYWORDS_COUNT`
 Default : `3`
 
-Maximum number of keywords to be used for ranking the results. If the query contains more keywords, only the first ones will be used to calculate the ranking of results. 
+Maximum number of keywords to be used for ranking the results. If the query contains more keywords, 
+only the first ones will be used to calculate the ranking of results. 
 ### Search API
 To be described...
 
 Look into the code to check what you can do with it.
 ### Performance
-Despite the naive design, the index performs surpsisingly well, even with quite large datasets. It can search through 100k documents containing 10M words in a fraction of a second.
+Despite the naive design, the index performs surpsisingly well, even with quite large datasets. 
+It can search through 100k documents containing 10M words in a fraction of a second.
