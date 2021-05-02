@@ -23,13 +23,6 @@ def prefix_lookups(q, prefix):
         q.children[i]=prefix_lookups(c, prefix)
     return q
 
-def apply_lexem_filter(qs, q, sticky, prefix):
-    if sticky:
-        qs=qs.annotate(p=F(prefix+'position'))
-        q=q&Q(position=F('p')+1)
-    
-    return qs.filter(prefix_lookups(copy.deepcopy(q), prefix))
-
 
 class SearchQuerySet(QuerySet):
     def __init__(self, model=None, query=None, using=None, hints=None):
@@ -38,50 +31,44 @@ class SearchQuerySet(QuerySet):
     
     @cache
     def count(self):
-        cloned=self._clone()
-        if cloned.query.annotation_select.pop("rank", None):
-            return cloned.count()
-        else:
-            return super().count()
+        return self.values("pk").aggregate(c=Count("*"))['c']
         
-    def apply_filter(self, q, sticky=False):
-        return apply_lexem_filter(self, q, sticky, "occurrence__")
+    def apply_filter(self, q):
+        filtered = self.filter(prefix_lookups(copy.deepcopy(q), "occurrence__"))
+        filtered.search_conditions.append(q)
+        return filtered
     
     def search(self, query):
-        ranking=self
         filtered=self
         conditions=self.model.parse_query(query)
         for q in conditions:
-            sticky=getattr(q,'sticky', None)
-            if not sticky:
-                ranking=ranking.annotate_rank(q)
-            filtered=filtered.apply_filter(q, sticky)
+            filtered=filtered.apply_filter(q).annotate_rank()
+            if getattr(q,'sticky', None):
+                filtered=filtered.filter(d=1)
         
         if filtered is self:
             return self
-        
-        results=self.annotate(rank=ranking.filter(pk=OuterRef('pk')).values('rank'))
+        results = filtered.order_by("rank")
+        results.query.annotations.pop("d")
+        results.query.annotations.pop("p")
         results.search_conditions=conditions
-        results=results.filter(pk__in=filtered)
-        return results.order_by('rank')
+        return results
     
-    def annotate_rank(self, q):
-        i=len(self.search_conditions)
+    def annotate_rank(self):
+        i=len(self.search_conditions)-1
         if i>=MAX_RANKING_KEYWORDS_COUNT:
-            self.search_conditions.append(q)
             return self
-        ranking=self.apply_filter(q)
-        ranking=ranking.annotate(**{f"p{i}":F('occurrence__position')})
+        ranking=self
+        
         if i==0:
-            ranking=ranking.annotate(d0=Value(1, output_field=FloatField()))
+            ranking=ranking.annotate(d=Value(1, output_field=FloatField()))
         else:
-            ranking=ranking.annotate(
-                **{f"d{i}":Abs(F(f"p{i}")-F(f'p{i-1}')-1.0, output_field=FloatField())+F(f"d{i-1}")})
+            ranking=ranking.annotate(d=Abs(F("occurrence__position")-F("p")-1.0, output_field=FloatField())+F("d"))
         
         ranking=ranking.annotate(
-            rank=ExpressionWrapper(Min(f"d{i}")*F("length")/Count("*"), output_field=FloatField()))
-        
-        ranking.search_conditions.append(q)
+            rank=ExpressionWrapper(Min("d")*F("length")/Count("*"), output_field=FloatField()))
+
+        ranking=ranking.annotate(p=F("occurrence__position"))
         return ranking
     
     def prefetch_matches(self):
