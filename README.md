@@ -36,7 +36,11 @@ class BookIndexEntry(IndexEntry):
     object = models.OneToOneField('books.Book', on_delete=models.CASCADE)
     search_template='search_index/book.txt'
 ```
-The `object` field defines a relation to a model which is being indexed. The engine uses `search_template` to render the text with `object` variable in template context. By default the rendered text is tokenized with by `re.searchall(r'[^\s"]+', text)`. You can change this behavior by overriding `tokenize` class method in your index model. All extracted tokens are stored in the index of respective indexed model instance.
+The `object` field defines a relation to a model which is being indexed. 
+The engine uses `search_template` to render the text with `object` variable in template context. 
+By default the rendered text is tokenized with by `re.searchall(r'[^\s"]+', text)`. 
+You can change this behavior by overriding `tokenize` class method in your index model. 
+All extracted tokens are stored in the index of respective indexed model instance.
 ```python
 import re
 

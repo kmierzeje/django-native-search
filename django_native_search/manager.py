@@ -31,7 +31,7 @@ class SearchQuerySet(QuerySet):
     
     @cache
     def count(self):
-        return self.values("pk").aggregate(c=Count("*"))['c']
+        return self.values('pk').aggregate(c=Count("*"))['c']
         
     def apply_filter(self, q):
         filtered = self.filter(prefix_lookups(copy.deepcopy(q), "occurrence__"))
@@ -39,34 +39,42 @@ class SearchQuerySet(QuerySet):
         return filtered
     
     def search(self, query):
+        ranking=self
         filtered=self
         conditions=self.model.parse_query(query)
+        sticked=False
         for q in conditions:
-            filtered=filtered.apply_filter(q).annotate_rank()
+            ranking=ranking.apply_filter(q).annotate_rank()
             if getattr(q,'sticky', None):
-                filtered=filtered.filter(d=1)
+                ranking=ranking.filter(d=1)
+                sticked=True
+            filtered=self.apply_filter(q).filter(pk__in=filtered.all())
         
         if filtered is self:
             return self
-        results = filtered.order_by("rank")
-        results.query.annotations.pop("d")
-        results.query.annotations.pop("p")
+
+        if sticked:
+            filtered=filtered.filter(pk__in=ranking)
+
+        results = self.filter(pk__in=filtered)
+        results = results.annotate(rank=ranking.filter(pk=OuterRef("pk")).values("rank")).order_by("rank")
         results.search_conditions=conditions
         return results
     
     def annotate_rank(self):
-        i=len(self.search_conditions)-1
-        if i>=MAX_RANKING_KEYWORDS_COUNT:
-            return self
         ranking=self
         
-        if i==0:
-            ranking=ranking.annotate(d=Value(1, output_field=FloatField()))
-        else:
-            ranking=ranking.annotate(d=Abs(F("occurrence__position")-F("p")-1.0, output_field=FloatField())+F("d"))
+        keycount = len(self.search_conditions)
         
-        ranking=ranking.annotate(
-            rank=ExpressionWrapper(Min("d")*F("length")/Count("*"), output_field=FloatField()))
+        if keycount==1:
+            ranking=ranking.annotate(dsum=Value(1, output_field=FloatField()))
+        else:
+            ranking=ranking.annotate(d=F("occurrence__position")-F("p"))
+            ranking=ranking.annotate(dsum=Abs(F('d')-1.0, output_field=FloatField())+F("dsum"))
+        
+        if keycount<=MAX_RANKING_KEYWORDS_COUNT:
+            ranking=ranking.annotate(
+                    rank=ExpressionWrapper(Min("dsum")*F("length")/Count("*"), output_field=FloatField()))
 
         ranking=ranking.annotate(p=F("occurrence__position"))
         return ranking
