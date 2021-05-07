@@ -4,7 +4,7 @@ from django.db.models.signals import post_save
 class OccurrencesField(models.ManyToManyField):
     def __init__(self, query_name=None, **kwargs):
         from .models import Lexem
-        kwargs.setdefault('to', Lexem)
+        kwargs.setdefault('to', Lexem._meta.label)
         kwargs.setdefault('related_name','+')
         kwargs.setdefault('editable', False)
         super().__init__(**kwargs)
@@ -18,11 +18,15 @@ class OccurrencesField(models.ManyToManyField):
     def contribute_to_class(self, cls, name, **kwargs):
         super().contribute_to_class(cls, name, **kwargs)
         occurrences = self.remote_field.through
-        if not occurrences:
+        if not occurrences or isinstance(occurrences, str):
             return
         
         models.PositiveIntegerField(db_index=True).contribute_to_class(
             occurrences, 'position')
+        
+        models.CharField(db_index=True, max_length=16, default=' ').contribute_to_class(
+            occurrences, 'prefix')
+        
         unique = occurrences._meta.unique_together[0]+('position',)
         occurrences._meta.unique_together=(unique,)
         occurrences._meta.ordering=['position']
@@ -57,5 +61,8 @@ class OccurrencesField(models.ManyToManyField):
             
             lexem=lexem_cache.get(surface) or lexem_cache.setdefault(
                 surface, lexem_model.objects.get_or_create(surface=surface)[0])
-            
-            instance.occurrences.create(lexem=lexem, position=position)
+            values=dict(lexem=lexem, position=position)
+            prefix=getattr(surface,'prefix',None)
+            if prefix is not None:
+                values['prefix']=prefix
+            instance.occurrences.create(**values)

@@ -5,7 +5,6 @@ from django.db.models import (F, Value, Min, OuterRef, Count, FloatField, QueryS
 from django.db.models.manager import BaseManager, Manager
 from django.db.models.functions import Abs
 from django.conf import settings
-from .fields import OccurrencesField
 import logging
 from functools import cache
 
@@ -118,7 +117,6 @@ class IndexManager(Manager):
 class IndexEntryManager(BaseManager.from_queryset(SearchQuerySet)):
     def contribute_to_class(self, cls, name, **kwargs):
         super().contribute_to_class(cls, name, **kwargs)
-        OccurrencesField(query_name="occurrence").contribute_to_class(cls, "occurrences", **kwargs)
         IndexManager.register(cls)
 
     @property

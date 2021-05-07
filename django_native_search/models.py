@@ -13,13 +13,15 @@ from .manager import IndexEntryManager, IndexManager
 from django.utils.safestring import mark_safe
 from django.conf import settings
 from django.contrib.contenttypes.models import ContentType
+from django_native_search.fields import OccurrencesField
 
 
 MIN_TAIL_LEN=getattr(settings,"SEARCH_MIN_SUBSTR_LENGTH", 2)
 MAX_TAIL_COUNT_IN_QUERY=getattr(settings, "SEARCH_MAX_SUBTSTR_COUNT_IN_QUERY", 300)
 MAX_EXCERPT_FRAGMENTS=getattr(settings, "SEARCH_MAX_EXCERPT_FRAGMENTS", 5)
-EXCERPT_FRAGMENT_START_OFFSET=getattr(settings, "SEARCH_EXCERPT_FRAGMENT_START_OFFSET", -2)
-EXCERPT_FRAGMENT_END_OFFSET=getattr(settings, "SEARCH_EXCERPT_FRAGMENT_END_OFFSET", 5)
+EXCERPT_FRAGMENT_START_OFFSET=getattr(settings, "SEARCH_EXCERPT_FRAGMENT_START_OFFSET", -3)
+EXCERPT_FRAGMENT_END_OFFSET=getattr(settings, "SEARCH_EXCERPT_FRAGMENT_END_OFFSET", 6)
+EXCERPT_ADDITONAL_CONTEXT_FACTOR=getattr(settings, "SEARCH_EXCERPT_ADDITONAL_CONTEXT_FACTOR", 2)
 
 logger=logging.getLogger(__name__)
 
@@ -60,6 +62,7 @@ class Token(str):
 
 class IndexEntry(models.Model):
     length=models.PositiveIntegerField(editable=False)
+    occurrences=OccurrencesField(query_name="occurrence")
     
     object_field="object"
     objects=IndexEntryManager()
@@ -99,8 +102,9 @@ class IndexEntry(models.Model):
                 break
             
             token = Token(res.group(0))
+            token.prefix=re.sub(r"\s+"," ",text[i:res.start()])
             if cls.quote:
-                quotes=text.count(cls.quote, i, res.start())
+                quotes=token.prefix.count(cls.quote)
                 if sticky and quotes>0:
                     sticky = False
                     quotes-=1
@@ -148,11 +152,18 @@ class IndexEntry(models.Model):
                 best_matches[last_match.lexem_id]=last_match, rank
             last_match=m
         
-        best_matches=[m[0] for m in list(best_matches.values())[:MAX_EXCERPT_FRAGMENTS]]
+        best_matches=set([m[0] for m in list(best_matches.values())[:MAX_EXCERPT_FRAGMENTS]])
+        
+        i=1
+        while len(best_matches)<MAX_EXCERPT_FRAGMENTS and i<len(matches):
+            best_matches.add(matches[i])
+            i+=1
+            
+        additional_context=(MAX_EXCERPT_FRAGMENTS-len(best_matches))*EXCERPT_ADDITONAL_CONTEXT_FACTOR
         
         words=self.occurrences.filter(models.Q(*[
-            models.Q(position__gt=match.position+EXCERPT_FRAGMENT_START_OFFSET,
-                     position__lt=match.position+EXCERPT_FRAGMENT_END_OFFSET)
+            models.Q(position__gt=match.position+EXCERPT_FRAGMENT_START_OFFSET-additional_context,
+                     position__lt=match.position+EXCERPT_FRAGMENT_END_OFFSET+additional_context)
             for match in best_matches], _connector=models.Q.OR))
         
         highlight=set([m.position for m in matches])
@@ -162,7 +173,7 @@ class IndexEntry(models.Model):
             if word.position>pos+1:
                 excerpt+="..."
             if pos>0:
-                excerpt+=" "
+                excerpt+=word.prefix
             
             if word.position in highlight:
                 excerpt+= self.highlight(word)
@@ -183,7 +194,7 @@ class IndexEntry(models.Model):
         
     @cached_property
     def indexed_text(self):
-        return " ".join(self.occurrences.values_list("lexem__surface", flat=True))
+        return "".join([o.prefix+o.lexem.surface for o in self.occurrences.select_related('lexem')])
         
     @classmethod
     def get_index_queryset(cls):
@@ -200,4 +211,4 @@ class Index(ContentType):
         return self.model_class().objects.aggregate(models.Count('occurrence'))['occurrence__count']
     
     def entries(self):
-        return self.model_class().objects.count()
+        return self.model_class().objects.all().count()
