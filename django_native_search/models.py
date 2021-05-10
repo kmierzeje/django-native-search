@@ -1,5 +1,6 @@
 import logging
 import re
+from html import escape
 from django.db import models
 from django.db.models.functions import Lower
 import django_expression_index
@@ -173,7 +174,7 @@ class IndexEntry(models.Model):
             if word.position>pos+1:
                 excerpt+="..."
             if pos>0:
-                excerpt+=word.prefix
+                excerpt+=escape(word.prefix)
             
             if word.position in highlight:
                 excerpt+= self.highlight(word)
@@ -185,7 +186,8 @@ class IndexEntry(models.Model):
         return mark_safe(excerpt)
     
     def highlight(self, word):
-        return f"<em>{word.lexem.surface}</em>"
+        surface=escape(word.lexem.surface)
+        return f"<em>{surface}</em>"
     
     @cached_property
     def rendered_text(self):
