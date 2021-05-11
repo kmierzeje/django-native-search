@@ -167,6 +167,9 @@ class IndexEntry(models.Model):
                      position__lt=match.position+EXCERPT_FRAGMENT_END_OFFSET+additional_context)
             for match in best_matches], _connector=models.Q.OR))
         
+        return self.build_excerpt(words, matches)
+    
+    def build_excerpt(self, words, matches):
         highlight=set([m.position for m in matches])
         excerpt=""
         pos=-1
@@ -179,7 +182,7 @@ class IndexEntry(models.Model):
             if word.position in highlight:
                 excerpt+= self.highlight(word)
             else:
-                excerpt+=word.lexem.surface
+                excerpt+=escape(word.lexem.surface)
             pos=word.position+1
         if pos<self.length:
             excerpt+="..."
