@@ -64,5 +64,5 @@ class OccurrencesField(models.ManyToManyField):
             values=dict(lexem=lexem, position=position)
             prefix=getattr(surface,'prefix',None)
             if prefix is not None:
-                values['prefix']=prefix
+                values['prefix']=prefix[:self.remote_field.through._meta.get_field('prefix').max_length]
             instance.occurrences.create(**values)
