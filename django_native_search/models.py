@@ -7,18 +7,16 @@ import django_expression_index
 
 from django.template.loader import render_to_string
 from django.utils.functional import cached_property
-from django.db.models.signals import post_save
-from django.dispatch import receiver
 
 from .manager import IndexEntryManager, IndexManager
 from django.utils.safestring import mark_safe
 from django.conf import settings
 from django.contrib.contenttypes.models import ContentType
 from django_native_search.fields import OccurrencesField
+from django.db.models.functions.text import Length
 
 
-MIN_TAIL_LEN=getattr(settings,"SEARCH_MIN_SUBSTR_LENGTH", 2)
-MAX_TAIL_COUNT_IN_QUERY=getattr(settings, "SEARCH_MAX_SUBTSTR_COUNT_IN_QUERY", 300)
+MIN_SUBSTR_LEN=getattr(settings,"SEARCH_MIN_SUBSTR_LENGTH", 2)
 MAX_EXCERPT_FRAGMENTS=getattr(settings, "SEARCH_MAX_EXCERPT_FRAGMENTS", 5)
 EXCERPT_FRAGMENT_START_OFFSET=getattr(settings, "SEARCH_EXCERPT_FRAGMENT_START_OFFSET", -3)
 EXCERPT_FRAGMENT_END_OFFSET=getattr(settings, "SEARCH_EXCERPT_FRAGMENT_END_OFFSET", 6)
@@ -34,26 +32,6 @@ class Lexem(models.Model):
     
     def __str__(self):
         return self.surface
-
-class LexemTail(models.Model):
-    lexem=models.ForeignKey(Lexem, on_delete=models.CASCADE, 
-                            related_name="tails", related_query_name='tail')
-    surface=models.CharField(max_length=255, db_index=True)
-    
-    class Meta:
-        indexes=[django_expression_index.ExpressionIndex(expressions=[Lower('surface')])]
-        unique_together=('lexem','surface')
-    
-    def __str__(self):
-        return self.surface
-
-@receiver(post_save, sender=Lexem)
-def update_lexem_tail(instance, **kwargs):
-    instance.tails.all().delete()
-    for i in range(len(instance.surface)):
-        tail=instance.surface[i:]
-        if len(tail)>MIN_TAIL_LEN:
-            instance.tails.create(surface=tail)
 
 
 models.CharField.register_lookup(Lower)
@@ -114,6 +92,8 @@ class IndexEntry(models.Model):
                 if quotes%2>0:
                     sticky=not sticky
             i=res.end()
+            if not sticky and token == text and len(token) >= MIN_SUBSTR_LEN:
+                token.lookup = "contains"
             yield token
     
     @classmethod
@@ -122,19 +102,15 @@ class IndexEntry(models.Model):
         if query.islower():
             lookup +="__lower"
         tokens=list(cls.tokenize(query))
-        if len(tokens)==1 and len(tokens[0])>MIN_TAIL_LEN:
-            tail_q=LexemTail.objects.filter(**{
-                lookup+"__gte":tokens[0],
-                lookup+"__lt":tokens[0]+chr(0x10FFFF)})
-            if tail_q.count()<=MAX_TAIL_COUNT_IN_QUERY:
-                return [models.Q(lexem__in=Lexem.objects.filter(
-                    tail__in=tail_q))]
         
         query=[]
         for token in tokens:
-            condition=models.Q(lexem__in=Lexem.objects.filter(**{lookup:token}))
-            if query:
-                condition.sticky=getattr(token,'sticky',False)
+            token.lookup = lookup + "__" + getattr(token,"lookup", "exact")
+            lqs = Lexem.objects.filter(**{token.lookup: token})
+            if token.lookup.endswith("__contains"):
+                lqs=lqs.order_by(Length("surface"))[:20000]
+            condition=models.Q(lexem__in=lqs)
+            condition.token = token
             query.append(condition)
         return query
         
@@ -170,7 +146,7 @@ class IndexEntry(models.Model):
         return self.build_excerpt(words, matches)
     
     def build_excerpt(self, words, matches):
-        highlight=set([m.position for m in matches])
+        highlight={m.position:m for m in matches}
         excerpt=""
         pos=-1
         for word in words.select_related('lexem'):
@@ -179,18 +155,32 @@ class IndexEntry(models.Model):
             if pos>0:
                 excerpt+=escape(word.prefix)
             
-            if word.position in highlight:
-                excerpt+= self.highlight(word)
+            matched = highlight.get(word.position)
+            if matched:
+                matched.lexem = word.lexem
+                excerpt+= self.highlight(matched)
             else:
-                excerpt+=escape(word.lexem.surface)
+                excerpt+=self.to_html(word.lexem.surface)
             pos=word.position+1
         if pos<self.length:
             excerpt+="..."
         return mark_safe(excerpt)
     
     def highlight(self, word):
-        surface=escape(word.lexem.surface)
-        return f"<em>{surface}</em>"
+        if word.token.lookup.endswith("contains"):
+            flags = re.IGNORECASE if "__lower__" in word.token.lookup else 0
+            pattern = re.compile("(.*?)(("+re.escape(word.token)+")|$)", flags)
+            return "".join([self.to_html(part[0]) + self.to_html(part[1], True) 
+                            for part in pattern.findall(word.lexem.surface)])
+        return self.to_html(word.lexem.surface, True)
+
+    def to_html(self, surface, highlight=False):
+        if not surface:
+            return ""
+        surface=escape(surface)
+        if highlight:
+            surface = f"<em>{surface}</em>"
+        return surface
     
     @cached_property
     def rendered_text(self):

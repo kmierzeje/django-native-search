@@ -1,16 +1,13 @@
 import copy
 from django.core.exceptions import FieldDoesNotExist
-from django.db.models import (F, Value, Min, OuterRef, Count, FloatField, QuerySet, Q, Prefetch,
-                              ExpressionWrapper)
+from django.db.models import (F, Value, Min, Count, FloatField, QuerySet, Q, Prefetch,
+                              OuterRef, ExpressionWrapper)
 from django.db.models.manager import BaseManager, Manager
 from django.db.models.functions import Abs
-from django.conf import settings
 import logging
 from functools import cache
+from django.db.models.expressions import When, Case
 
-
-
-MAX_RANKING_KEYWORDS_COUNT=getattr(settings,"SEARCH_MAX_RANKING_KEYWORDS_COUNT", 3)
 
 logger=logging.getLogger(__name__)
 
@@ -37,24 +34,28 @@ class SearchQuerySet(QuerySet):
         filtered.search_conditions.append(q)
         return filtered
     
+    def search_one(self, condition):
+        return self.apply_filter(condition).distinct().annotate_rank().order_by("rank")
+    
     def search(self, query):
         ranking=self
         filtered=self
         conditions=self.model.parse_query(query)
-        sticked=False
+        if len(conditions) == 1:
+            return self.search_one(conditions[0])
         for q in conditions:
             ranking=ranking.apply_filter(q).annotate_rank()
-            if getattr(q,'sticky', None):
+            if getattr(q.token,'sticky', None):
                 ranking=ranking.filter(d=1)
-                sticked=True
-            filtered=self.apply_filter(q).filter(pk__in=filtered.all())
+                filtered=filtered.filter(pk__in=ranking.values("pk"))
+                
+            if filtered is not self:
+                filtered = self.filter(pk__in=filtered.all())
+            filtered = filtered.apply_filter(q)
         
         if filtered is self:
             return self
-
-        if sticked:
-            filtered=filtered.filter(pk__in=ranking)
-
+        
         results = self.filter(pk__in=filtered)
         results = results.annotate(rank=ranking.filter(pk=OuterRef("pk")).values("rank")).order_by("rank")
         results.search_conditions=conditions
@@ -62,24 +63,32 @@ class SearchQuerySet(QuerySet):
     
     def annotate_rank(self):
         ranking=self
-        
-        keycount = len(self.search_conditions)
-        
-        if keycount==1:
-            ranking=ranking.annotate(dsum=Value(1, output_field=FloatField()))
+        if "p" in ranking.query.annotations:
+            ranking=ranking.alias(d=F("occurrence__position")-F("p"))
+            ranking=ranking.alias(dsum=Abs(F('d')-1.0, output_field=FloatField())+F("dsum"))
         else:
-            ranking=ranking.annotate(d=F("occurrence__position")-F("p"))
-            ranking=ranking.annotate(dsum=Abs(F('d')-1.0, output_field=FloatField())+F("dsum"))
-        
-        if keycount<=MAX_RANKING_KEYWORDS_COUNT:
-            ranking=ranking.annotate(
-                    rank=ExpressionWrapper(Min("dsum")*F("length")/Count("*"), output_field=FloatField()))
+            ranking=ranking.alias(dsum=Value(1, output_field=FloatField()))
+            
+        ranking=ranking.annotate(
+                rank=ExpressionWrapper(Min("dsum")*F("length")/Count("*"), output_field=FloatField()))
 
-        ranking=ranking.annotate(p=F("occurrence__position"))
+        ranking=ranking.alias(p=F("occurrence__position"))
         return ranking
     
     def prefetch_matches(self):
-        qs=self.model.occurrences.filter(Q(*self.search_conditions, _connector=Q.OR))
+        conditions=[]
+        tokens=[]
+        for condition in self.search_conditions:
+            conditions.append(When(condition, then=Value(len(tokens))))
+            tokens.append(condition.token)
+        qs=self.model.occurrences.annotate(token=Case(*conditions)).filter(token__isnull=False)
+        class Decor(qs.__class__):
+            def __iter__(self):
+                for obj in super().__iter__():
+                    if isinstance(obj.token, int):
+                        obj.token=tokens[obj.token]
+                    yield obj
+        qs.__class__ = Decor
         return self.prefetch_related(Prefetch("occurrences", 
                                   queryset=qs,
                                   to_attr="matches"))
