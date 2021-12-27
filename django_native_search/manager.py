@@ -4,10 +4,12 @@ from django.db.models import (F, Value, Min, Count, FloatField, QuerySet, Q, Pre
                               OuterRef, ExpressionWrapper)
 from django.db.models.manager import BaseManager, Manager
 from django.db.models.functions import Abs
+from django.conf import settings
 import logging
 from functools import cache
 from django.db.models.expressions import When, Case
 
+MAX_RANKING_KEYWORDS = getattr(settings,"SEARCH_MAX_RANKING_KEYWORDS_COUNT", 3)
 
 logger=logging.getLogger(__name__)
 
@@ -43,38 +45,55 @@ class SearchQuerySet(QuerySet):
         conditions=self.model.parse_query(query)
         if len(conditions) == 1:
             return self.search_one(conditions[0])
-        for q in conditions:
-            ranking=ranking.apply_filter(q).annotate_rank()
-            if getattr(q.token,'sticky', None):
-                ranking=ranking.filter(d=1)
-                filtered=filtered.filter(pk__in=ranking.values("pk"))
-                
+        
+        filter_by_ranking = False
+        for i, q in enumerate(conditions):
             if filtered is not self:
                 filtered = self.filter(pk__in=filtered.all())
             filtered = filtered.apply_filter(q)
+            
+            sticky = getattr(q.token,'sticky', None)
+            
+            if not sticky and i>=MAX_RANKING_KEYWORDS-1:
+                if filter_by_ranking:
+                    filtered = filtered.filter(pk__in=ranking.values("pk"))
+                ranking=filtered.carry_annotation(ranking, "rank")
+                continue
+            ranking=ranking.apply_filter(q).annotate_rank()
+            if sticky:
+                ranking=ranking.filter(d=1)
+                filter_by_ranking = True
         
         if filtered is self:
             return self
         
+        if filter_by_ranking:
+            filtered=filtered.filter(pk__in=ranking.values("pk"))
+        
         results = self.filter(pk__in=filtered)
-        results = results.annotate(rank=ranking.filter(pk=OuterRef("pk")).values("rank")).order_by("rank")
+        results = results.carry_annotation(ranking, "rank")
         results.search_conditions=conditions
-        return results
+        return results.order_by("rank")
     
+    def carry_annotation(self, qs, src, dst=None):
+        return self.annotate(**{dst or src:qs.filter(pk=OuterRef("pk")).values(src)[:1]})
+
     def annotate_rank(self):
         ranking=self
         if "p" in ranking.query.annotations:
-            ranking=ranking.alias(d=F("occurrence__position")-F("p"))
-            ranking=ranking.alias(dsum=Abs(F('d')-1.0, output_field=FloatField())+F("dsum"))
+            ranking=ranking.alias(
+                d=F("occurrence__position")-F("p"),
+                dsum=Abs(F('d')-1.0, output_field=FloatField())+F("dsum"))
         else:
-            ranking=ranking.alias(dsum=Value(1, output_field=FloatField()))
+            ranking=ranking.alias(
+                dsum=Value(1, output_field=FloatField()))
             
-        ranking=ranking.annotate(
-                rank=ExpressionWrapper(Min("dsum")*F("length")/Count("*"), output_field=FloatField()))
+        ranking=ranking.annotate(rank=ExpressionWrapper(
+            Min("dsum")*F("length")/Count("*"), output_field=FloatField()))
 
         ranking=ranking.alias(p=F("occurrence__position"))
         return ranking
-    
+
     def prefetch_matches(self):
         conditions=[]
         tokens=[]
